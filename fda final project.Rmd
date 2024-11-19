@@ -1,0 +1,257 @@
+---
+title: "project final"
+author: "21MIA1003 B. koushik"
+date: "2024-11-14"
+output: html_document
+---
+```{r}
+# Install necessary libraries if not already installed
+#install.packages("pROC")
+#install.packages("keras")
+#install.packages("tensorflow")
+#install.packages("reticulate")
+#install.packages("magick")
+#install.packages("caret")
+
+library(reticulate)
+py_install("Pillow")
+library(tensorflow)
+library(keras)
+library(stringr)
+library(readr)
+library(purrr)
+library(caret)
+library(e1071)
+library(magick)
+library(pROC)
+
+data_dir <- "C:/Users/91924/Desktop/MY WORKS/sem 7/FDA/images"
+
+# Function to load and display images directly from the directory without processing
+display_raw_images <- function(data_dir, num_images = 10) {
+  folders <- list.files(data_dir, full.names = TRUE)
+  image_paths <- list.files(folders, full.names = TRUE, recursive = TRUE)
+  
+  # Display only the first `num_images` images
+  selected_paths <- image_paths[1:num_images]
+  
+  # Extract labels from folder names
+  labels <- basename(dirname(selected_paths))
+  
+  # Create a grid layout to display images
+  par(mfcol = c(2, 5), mar = rep(1, 4), oma = rep(0.2, 4))  
+  
+  for (i in 1:num_images) {
+    img <- image_read(selected_paths[i])  
+    plot(as.raster(img), main = labels[i])  
+  }
+  
+  cat("Displayed", num_images, "raw images from the dataset.\n")
+}
+
+# Display raw images before preprocessing
+display_raw_images(data_dir, num_images = 10)
+
+load_raw_images <- function(data_dir, target_size = c(256, 256)) {
+  image_paths <- list.files(data_dir, pattern = "\\.png$|\\.jpg$|\\.jpeg$", full.names = TRUE, recursive = TRUE)
+  images <- list()
+  labels <- character()
+
+  for (img_path in image_paths) {
+    img <- image_load(img_path, target_size = target_size, color_mode = "rgb")
+    img_array <- image_to_array(img) / 255.0
+    images <- append(images, list(img_array))
+    label <- basename(dirname(img_path))
+    labels <- c(labels, label)
+  }
+
+  if (length(images) == 0) stop("No images were loaded. Check your image directory and file extensions.")
+  
+  images_array <- do.call(abind::abind, c(images, along = 0))
+  labels_factor <- factor(labels)
+  numeric_labels <- as.numeric(labels_factor) - 1
+
+  return(list(
+    images = images_array,
+    labels = numeric_labels,
+    label_names = levels(labels_factor)
+  ))
+}
+
+# Load dataset
+dataset <- load_raw_images("C:/Users/91924/Desktop/MY WORKS/sem 7/FDA/images", target_size = c(256, 256))
+cat("Number of images loaded:", dim(dataset$images)[1], "\n")
+
+# Display some images to ensure they're loaded correctly
+par(mfcol = c(3, 4), mar = rep(1, 4), oma = rep(0.2, 4))
+for (i in 1:min(12, dim(dataset$images)[1])) {
+  img <- as.raster(dataset$images[i,,,])  
+  plot(img, main = paste("Label:", dataset$label_names[dataset$labels[i] + 1]))  
+}
+
+# Print the shape of the dataset to check if it's loaded correctly
+cat("Images shape:", dim(dataset$images), "\n")
+cat("Labels shape:", length(dataset$labels), "\n")
+
+# Split the data into training and testing sets
+set.seed(123)
+train_indices <- createDataPartition(dataset$labels, p = 0.8, list = FALSE)
+train_data <- dataset$images[train_indices,,,]
+train_labels <- dataset$labels[train_indices]
+test_data <- dataset$images[-train_indices,,,]
+test_labels <- dataset$labels[-train_indices]
+
+# Define and compile the updated model with an extra CNN layer for 30 classes
+input_layer <- layer_input(shape = c(256, 256, 3))
+
+# Additional convolutional layer added in between conv_1 and conv_2
+conv_1 <- input_layer %>%
+  layer_conv_2d(filters = 32, kernel_size = c(3, 3), activation = "relu") %>%
+  layer_conv_2d(filters = 64, kernel_size = c(3, 3), activation = "relu") %>%
+  layer_max_pooling_2d(pool_size = c(2, 2))
+
+conv_2 <- conv_1 %>%
+  layer_conv_2d(filters = 128, kernel_size = c(3, 3), activation = "relu") %>%  # New layer
+  layer_conv_2d(filters = 64, kernel_size = c(3, 3), activation = "relu") %>%
+  layer_max_pooling_2d(pool_size = c(2, 2))
+
+flattened <- conv_2 %>%
+  layer_flatten() %>%
+  layer_dense(units = 256, activation = "relu") %>%
+  layer_dense(units = 30, activation = "softmax")  # Output layer with 30 units for 30 classes
+
+model <- keras_model(inputs = input_layer, outputs = flattened)
+
+model %>% compile(
+  optimizer = "adam",
+  loss = "sparse_categorical_crossentropy",
+  metrics = c("accuracy")
+)
+
+# Fit the model to your data
+history <- model %>% fit(
+  train_data,
+  train_labels,
+  epochs = 12,
+  batch_size = 32
+)
+
+
+
+
+```
+```{r}
+# Plot training history
+plot(history)
+
+```
+
+
+```{r}
+# Function to select 4 random images, predict their class, and display the results
+predict_and_display <- function(model, data_dir, dataset, num_images = 4) {
+  # Select random image indices
+  set.seed(123)  # For reproducibility
+  random_indices <- sample(seq_len(length(dataset$labels)), num_images)
+  
+  # Create a plot layout
+  par(mfcol = c(2, 2), mar = rep(2, 4))  
+  
+  for (i in random_indices) {
+    # Extract image and actual label
+    img_array <- dataset$images[i,,,]
+    actual_label <- dataset$label_names[dataset$labels[i] + 1]
+    
+    # Predict the class
+    img_batch <- array_reshape(img_array, c(1, 256, 256, 3))  # Reshape for prediction
+    prediction <- model %>% predict(img_batch)
+    predicted_label <- dataset$label_names[which.max(prediction) - 1 + 1]
+    
+    # Plot the image
+    img <- as.raster(img_array)
+    plot(img, main = "", frame.plot = FALSE)  # Suppress axes and frame
+    
+    # Add text with actual and predicted labels
+    title_text <- paste("Actual: ", actual_label, "\nPredicted: ", predicted_label)
+    mtext(title_text, side = 1, line = -1, cex = 0.8, col = "blue")
+  }
+  
+  cat("Displayed", num_images, "images with actual and predicted labels.\n")
+}
+
+# Call the function to display results
+predict_and_display(model, data_dir, dataset, num_images = 6)
+
+```
+```{r}
+library(keras)
+library(imager)
+
+# Define the directory for the images
+image_dir <- "C:/Users/91924/Desktop/MY WORKS/sem 7/FDA/images"
+
+# Get list of classes (subdirectories)
+classes <- list.dirs(image_dir, full.names = FALSE, recursive = FALSE)
+
+# Initialize lists for storing images and labels
+confused_test_images <- list()
+confused_test_labels <- list()
+
+# Number of images per class
+images_per_class <- 5
+
+# Loop through each class and load the first 5 images
+for (class_idx in 1:length(classes)) {
+  class_path <- file.path(image_dir, classes[class_idx])
+  
+  # Get first 5 images in the current class folder
+  image_files <- list.files(class_path, full.names = TRUE)[1:images_per_class]
+  
+  for (image_file in image_files) {
+    # Load and preprocess the image
+    image <- image_load(image_file, target_size = c(256, 256))  # Resize to match the input size for the model
+    image_array <- image_to_array(image) / 255  # Normalize to [0, 1]
+    
+    # Append to the test data
+    confused_test_images[[length(confused_test_images) + 1]] <- image_array
+    confused_test_labels[[length(confused_test_labels) + 1]] <- class_idx - 1  # Zero-based label
+  }
+}
+
+# Convert lists to arrays
+confused_test_images <- array(unlist(confused_test_images), dim = c(length(confused_test_images), 256, 256, 3))
+confused_test_labels <- unlist(confused_test_labels)
+
+# Print the shapes
+cat("Images shape:", dim(confused_test_images), "\n")
+cat("Labels shape:", length(confused_test_labels), "\n")
+
+
+```
+```{r}
+library(caret)
+
+# Create confusion matrix
+conf_matrix <- confusionMatrix(as.factor(predicted_labels), as.factor(confused_test_labels))
+
+# Display confusion matrix
+print(conf_matrix)
+
+```
+```{r}
+library(ggplot2)
+library(reshape2)
+
+# Convert confusion matrix to data frame
+conf_matrix_df <- as.data.frame(as.table(conf_matrix))
+
+# Plot confusion matrix using ggplot2
+ggplot(conf_matrix_df, aes(Var1, Var2, fill = Freq)) + 
+  geom_tile() +
+  geom_text(aes(label = Freq), color = "white") +
+  scale_fill_gradient(low = "white", high = "blue") +
+  theme_minimal() +
+  labs(x = "Predicted", y = "True", title = "Confusion Matrix")
+
+```
+

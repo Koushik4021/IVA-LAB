@@ -1,0 +1,437 @@
+---
+title: "PROJECT"
+author: "21MIA1055 VUYYURI SHANMUKH SRISAI"
+date: "2024-11-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+install.packages("xfun") 
+packageVersion("xfun")
+```
+```{r}
+if (!requireNamespace("keras", quietly = TRUE)) {
+  install.packages("keras")
+}
+if (!requireNamespace("tensorflow", quietly = TRUE)) {
+  install.packages("tensorflow")
+}
+if (!requireNamespace("reticulate", quietly = TRUE)) {
+  install.packages("reticulate")
+}
+if (!requireNamespace("EBImage", quietly = TRUE)) {
+  install.packages("BiocManager")
+  BiocManager::install("EBImage")
+}
+
+
+library(keras)        # For building and training CNN
+library(tensorflow)   # For TensorFlow backend
+library(reticulate)   # For managing Python environment
+library(EBImage)      # For image preprocessing and visualization
+
+library(tensorflow)
+library(keras)
+
+# Load TensorFlow
+library(tensorflow)
+
+# Check TensorFlow Version
+tf_version <- tf$version$VERSION
+cat("TensorFlow version:", tf_version, "\n")
+
+# Check Keras Version
+# Keras is part of TensorFlow in recent versions
+keras_version <- tf$keras$`__version__`
+cat("Keras version:", keras_version, "\n")
+
+
+```
+
+```{r}
+# Load Sample Images from the Dataset
+load_sample_images <- function(data_dir) {
+  class_dirs <- list.files(data_dir, full.names = TRUE)
+  sample_files <- list.files(class_dirs[1], full.names = TRUE)[1:4]  # Take 4 images from the first class
+  images <- lapply(sample_files, function(file) readImage(file))  # Read images
+  
+  # Display Images
+  par(mfrow = c(2, 2))  # Arrange images in a 2x2 grid
+  lapply(images, function(img) display(img, method = "raster"))
+}
+
+# Replace 'train_dir' with the path to your train folder
+train_dir <- "C:/Users/GOD/Desktop/fda_project 2/train"
+load_sample_images(train_dir)
+
+```
+```{r}
+train_dir <- "C:/Users/GOD/Desktop/fda_project 2/train"
+val_dir <- "C:/Users/GOD/Desktop/fda_project 2/validation"
+test_dir <- "C:/Users/GOD/Desktop/fda_project 2/test"
+
+# Step 1: Prepare Data Generators
+# No preprocessing as images are already 256 x 256
+train_datagen <- image_data_generator(
+  rescale = 1/255  # Normalize pixel values between 0 and 1
+)
+val_datagen <- image_data_generator(
+  rescale = 1/255
+)
+test_datagen <- image_data_generator(
+  rescale = 1/255
+)
+
+# Training Data Generator
+train_generator <- keras::flow_images_from_directory(
+  directory = train_dir,
+  target_size = c(224, 224),  # Resize to 224x224
+  batch_size = 32,
+  class_mode = "categorical"
+)
+
+# Validation Data Generator
+val_generator <- keras::flow_images_from_directory(
+  directory = val_dir,
+  target_size = c(224, 224),  # Resize to 224x224
+  batch_size = 32,
+  class_mode = "categorical"
+)
+
+# Test Data Generator (if applicable)
+test_generator <- keras::flow_images_from_directory(
+  directory = test_dir,
+  target_size = c(224, 224),  # Resize to 224x224
+  batch_size = 32,
+  class_mode = "categorical",
+  shuffle = FALSE
+)
+
+
+```
+```{r}
+build_model <- function(input_shape, num_classes) {
+  # Load Pre-trained Base Model
+  base_model <- application_mobilenet_v2(
+    weights = "imagenet",
+    include_top = FALSE,
+    input_shape = input_shape
+  )
+  
+  # Freeze Base Model Layers
+  freeze_weights(base_model)
+  
+  # Add Custom Classification Layers
+  inputs <- layer_input(shape = input_shape)
+  x <- base_model(inputs, training = FALSE)  # Use base model in inference mode
+  x <- layer_global_average_pooling_2d()(x)  # Global average pooling
+  
+  # Add additional dense layers
+  x <- layer_dense(units = 256, activation = "relu")(x)  # Additional dense layer
+  x <- layer_batch_normalization()(x)  # Batch normalization for stability
+  x <- layer_dropout(rate = 0.5)(x)    # Dropout for regularization
+  x <- layer_dense(units = 128, activation = "relu")(x)  # Dense layer with 128 units
+  x <- layer_batch_normalization()(x)
+  x <- layer_dropout(rate = 0.5)(x)    # Dropout for regularization
+  
+  # Add another dense layer with 128 or 256 units
+  x <- layer_dense(units = 128, activation = "relu")(x)  # Added dense layer with 128 units
+  
+  # Output layer
+  outputs <- layer_dense(units = num_classes, activation = "softmax")(x)
+  
+  # Compile Model
+  model <- tf$keras$Model(inputs = inputs, outputs = outputs)
+  model$compile(
+    optimizer = tf$keras$optimizers$Adam(learning_rate = 0.0001),
+    loss = "categorical_crossentropy",
+    metrics = list("accuracy")
+  )
+  
+  return(model)
+}
+
+# Initialize Model
+input_shape <- c(224, 224, 3)  # Resize images to match pre-trained model requirements
+num_classes <- length(train_generator$class_indices)
+model <- build_model(input_shape, num_classes)
+
+
+model$summary()
+```
+```{r}
+reticulate::py_install("Pillow")
+reticulate::py_config()
+reticulate::py_run_string("from PIL import Image")
+reticulate::py_install("pillow",env=tf)
+library(reticulate)
+use_virtualenv("C:/Users/GOD/Documents/.virtualenvs/r-tensorflow", required = TRUE)
+reticulate::py_run_string("from PIL import Image")
+
+
+history <- model$fit(
+  x = train_generator,
+  validation_data = val_generator,
+  epochs = as.integer(50),  # Explicitly ensure epochs is an integer
+  steps_per_epoch = as.integer(train_generator$samples %/% train_generator$batch_size),
+  validation_steps = as.integer(val_generator$samples %/% val_generator$batch_size)
+)
+
+```
+```{r}
+# Evaluate Model on Test Data
+results <- model$evaluate(
+  x = test_generator,
+  steps = as.integer(test_generator$samples %/% test_generator$batch_size)
+)
+
+cat("Test Loss:", results[[1]], "\n")
+cat("Test Accuracy:", results[[2]], "\n")
+```
+```{r}
+# Save the Model
+model$save("trained_image_classification_model.h5")
+cat("Model saved as trained_image_classification_model.h5\n")
+# Save Model in Native Keras Format
+model$save("trained_image_classification_model.keras")
+cat("Model saved as trained_image_classification_model.keras\n")
+
+```
+```{r}
+# Extract Metrics from History
+accuracy <- history$history$accuracy
+val_accuracy <- history$history$val_accuracy
+loss <- history$history$loss
+val_loss <- history$history$val_loss
+
+# Plot Training and Validation Accuracy
+plot(accuracy, type = "l", col = "blue", xlab = "Epoch", ylab = "Accuracy", main = "Model Accuracy")
+lines(val_accuracy, col = "red")
+legend("bottomright", legend = c("Training", "Validation"), col = c("blue", "red"), lty = 1)
+
+# Plot Training and Validation Loss
+plot(loss, type = "l", col = "blue", xlab = "Epoch", ylab = "Loss", main = "Model Loss")
+lines(val_loss, col = "red")
+legend("topright", legend = c("Training", "Validation"), col = c("blue", "red"), lty = 1)
+
+
+```
+
+```{r}
+# Extract Metrics from History
+accuracy <- history$history$accuracy
+val_accuracy <- history$history$val_accuracy
+
+# Plot Training and Validation Accuracy
+plot(accuracy, type = "l", col = "blue", xlab = "Epoch", ylab = "Accuracy", main = "Training and Validation Accuracy")
+lines(val_accuracy, col = "red")
+legend("bottomright", legend = c("Training Accuracy", "Validation Accuracy"), col = c("blue", "red"), lty = 1)
+
+
+```
+
+```{r}
+# Generate Predictions on Test Data
+predictions <- model$predict(test_generator, steps = as.integer(test_generator$samples %/% test_generator$batch_size))
+
+# Convert Predictions to Class Indices
+predicted_classes <- apply(predictions, 1, which.max) - 1  # Convert to 0-indexed
+true_classes <- test_generator$classes  # True class indices from the generator
+class_labels <- names(test_generator$class_indices)  # Class labels
+# Print Sample Predictions
+for (i in 1:10) {
+  cat("True Label:", class_labels[true_classes[i] + 1], "\tPredicted Label:", class_labels[predicted_classes[i] + 1], "\n")
+}
+
+```
+```{r}
+cat("Length of predicted_classes:", length(predicted_classes), "\n")
+cat("Length of true_classes:", length(true_classes), "\n")
+min_length <- min(length(predicted_classes), length(true_classes))
+predicted_classes <- predicted_classes[1:min_length]
+true_classes <- true_classes[1:min_length]
+conf_matrix <- table(Predicted = predicted_classes, Actual = true_classes)
+print(conf_matrix)
+
+```
+
+```{r}
+class_names <- names(test_generator$class_indices)
+install.packages('pheatmap')
+library(pheatmap)
+pheatmap(
+  conf_matrix,
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  display_numbers = TRUE,
+  labels_row = class_names,
+  labels_col = class_names,
+  color = colorRampPalette(c("white", "blue"))(50)
+)
+
+```
+```{r}
+# Function to Calculate Precision, Recall, F1-Score
+calculate_metrics <- function(conf_matrix) {
+  precision <- diag(conf_matrix) / rowSums(conf_matrix)  # Precision: TP / (TP + FP)
+  recall <- diag(conf_matrix) / colSums(conf_matrix)     # Recall: TP / (TP + FN)
+  f1 <- 2 * (precision * recall) / (precision + recall)  # F1-Score
+
+  # Handle NA for cases where division by zero occurs
+  precision[is.na(precision)] <- 0
+  recall[is.na(recall)] <- 0
+  f1[is.na(f1)] <- 0
+
+  list(precision = precision, recall = recall, f1 = f1)
+}
+
+# Create Confusion Matrix
+conf_matrix <- table(Predicted = predicted_classes, Actual = true_classes)
+
+# Calculate Metrics
+metrics <- calculate_metrics(conf_matrix)
+
+# Print Metrics for Each Class
+cat("Precision (per class):", metrics$precision, "\n")
+cat("Recall (per class):", metrics$recall, "\n")
+cat("F1-Score (per class):", metrics$f1, "\n")
+
+# If You Want to Assign Class Names
+names(metrics$precision) <- class_names
+names(metrics$recall) <- class_names
+names(metrics$f1) <- class_names
+
+# Print with Class Names
+cat("\nMetrics by Class:\n")
+print(data.frame(
+  Class = names(metrics$precision),
+  Precision = metrics$precision,
+  Recall = metrics$recall,
+  F1_Score = metrics$f1
+))
+
+```
+```{r}
+# Function to Calculate Overall Precision, Recall, F1-Score
+calculate_overall_metrics <- function(conf_matrix) {
+  # Per-class Metrics
+  precision <- diag(conf_matrix) / rowSums(conf_matrix)  # Precision: TP / (TP + FP)
+  recall <- diag(conf_matrix) / colSums(conf_matrix)     # Recall: TP / (TP + FN)
+  f1 <- 2 * (precision * recall) / (precision + recall)  # F1-Score
+
+  # Handle NA for cases where division by zero occurs
+  precision[is.na(precision)] <- 0
+  recall[is.na(recall)] <- 0
+  f1[is.na(f1)] <- 0
+
+  # Macro-average (unweighted mean)
+  macro_precision <- mean(precision)
+  macro_recall <- mean(recall)
+  macro_f1 <- mean(f1)
+
+  # Weighted-average (weighted by support per class)
+  support <- rowSums(conf_matrix)  # Total samples per class
+  total_support <- sum(support)
+  weighted_precision <- sum(precision * support) / total_support
+  weighted_recall <- sum(recall * support) / total_support
+  weighted_f1 <- sum(f1 * support) / total_support
+
+  list(
+    macro_precision = macro_precision,
+    macro_recall = macro_recall,
+    macro_f1 = macro_f1,
+    weighted_precision = weighted_precision,
+    weighted_recall = weighted_recall,
+    weighted_f1 = weighted_f1
+  )
+}
+
+# Create Confusion Matrix
+conf_matrix <- table(Predicted = predicted_classes, Actual = true_classes)
+
+# Calculate Overall Metrics
+overall_metrics <- calculate_overall_metrics(conf_matrix)
+
+# Print Overall Metrics
+cat("Macro Precision:", overall_metrics$macro_precision, "\n")
+cat("Macro Recall:", overall_metrics$macro_recall, "\n")
+cat("Macro F1-Score:", overall_metrics$macro_f1, "\n")
+cat("Weighted Precision:", overall_metrics$weighted_precision, "\n")
+cat("Weighted Recall:", overall_metrics$weighted_recall, "\n")
+cat("Weighted F1-Score:", overall_metrics$weighted_f1, "\n")
+
+```
+```{r}
+# Install pROC package if not installed
+if (!requireNamespace("pROC", quietly = TRUE)) {
+  install.packages("pROC")
+}
+
+library(pROC)
+
+# Convert True Classes to One-Hot Encoding
+true_classes_one_hot <- model.matrix(~factor(true_classes) - 1)  # Creates one-hot encoded matrix
+
+# Initialize a list to store ROC results
+roc_curves <- list()
+auc_values <- numeric(length = ncol(true_classes_one_hot))
+
+# Calculate ROC and AUC for each class
+for (i in 1:ncol(true_classes_one_hot)) {
+  # Get the true binary labels and predicted probabilities for the current class
+  true_labels <- true_classes_one_hot[, i]
+  predicted_probs <- predictions[, i]
+  
+  # Compute ROC
+  roc_curves[[i]] <- roc(true_labels, predicted_probs)
+  
+  # Compute AUC
+  auc_values[i] <- auc(roc_curves[[i]])
+  
+  # Print AUC for this class
+  cat("Class", class_names[i], "AUC:", auc_values[i], "\n")
+}
+
+# Plot ROC Curves
+colors <- rainbow(length(roc_curves))
+plot(roc_curves[[1]], col = colors[1], main = "AUC-ROC Curve for Multi-Class Classification")
+for (i in 2:length(roc_curves)) {
+  plot(roc_curves[[i]], col = colors[i], add = TRUE)
+}
+legend("bottomright", legend = class_names, col = colors, lty = 1)
+
+
+```
+```{r}
+# Function to Plot Images with True and Predicted Labels
+plot_images_with_labels <- function(image_generator, true_labels, predicted_labels, class_labels, num_images = 10) {
+  # Generate a batch of images
+  batch <- generator_next(image_generator)
+  images <- batch[[1]]
+  
+  par(mfrow = c(2, 5))  # Adjust the grid to fit 10 images (2 rows, 5 columns)
+  
+  for (i in 1:num_images) {
+    img <- images[i,,,]  # Extract the i-th image
+    img <- img / 255  # Normalize the image to [0, 1]
+    true_label <- class_labels[true_labels[i] + 1]  # Get true label
+    predicted_label <- class_labels[predicted_labels[i] + 1]  # Get predicted label
+    
+    # Display the image
+    plot(as.raster(img))
+    title(main = paste("True:", true_label, "\nPred:", predicted_label),
+          col.main = ifelse(true_label == predicted_label, "green", "red"), cex.main = 0.8)
+  }
+}
+
+# Plot Predicted Images
+# Ensure `test_generator` is configured to return images without shuffling
+plot_images_with_labels(test_generator, true_classes, predicted_classes, class_labels, num_images = 10)
+
+
+```
+
